@@ -1,7 +1,8 @@
-use::crossterm::event::*;
-use::crossterm::{cursor, event, execute, queue, terminal};
-use::crossterm::terminal::ClearType;
-use std::io::{stdout, Write, self};
+use ::crossterm::event::*;
+use ::crossterm::terminal::ClearType;
+use ::crossterm::{cursor, event, execute, queue, terminal};
+use std::cmp;
+use std::io::{self, stdout, Write};
 use std::time::Duration;
 
 // Cleanup struct is used to disable raw mode
@@ -9,7 +10,7 @@ use std::time::Duration;
 // out of scope, the drop() implmentation is called
 struct Cleanup;
 
-const VERSION:f32 = 1.0;
+const VERSION: f32 = 1.0;
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
@@ -64,13 +65,14 @@ impl CursorController {
 
 // Output struct is used to handle the output to the
 // terminal screen. This includes the ~ at the start of
-// each line like Vim and also used to ensure that 
+// each line like Vim and also used to ensure that
 // instead of multiple small writes happening each time,
 // one big write happens (efficient)
 struct Output {
     win_size: (usize, usize),
     editor_contents: EditorContents,
     cursor_controller: CursorController,
+    editor_rows: EditorRows,
 }
 
 impl Output {
@@ -85,6 +87,7 @@ impl Output {
             win_size,
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
+            editor_rows: EditorRows::new(),
         }
     }
 
@@ -105,30 +108,36 @@ impl Output {
         let screen_columns = self.win_size.0;
 
         for i in 0..screen_rows {
+            if i >= self.editor_rows.number_of_rows() {
+                if i == screen_rows / 3 {
+                    let mut welcome = format!("Pound editor --- Version {}", VERSION);
 
-            if i == screen_rows / 3 {
-                let mut welcome = format!("Pound editor --- Version {}", VERSION);
-                
-                if welcome.len() > screen_columns {
-                    welcome.truncate(screen_columns)
-                }
-                
-                let mut padding = (screen_columns - welcome.len()) / 2;
-                if padding != 0 {
+                    if welcome.len() > screen_columns {
+                        welcome.truncate(screen_columns)
+                    }
+
+                    let mut padding = (screen_columns - welcome.len()) / 2;
+                    if padding != 0 {
+                        self.editor_contents.push('~');
+                        padding -= 1;
+                    }
+                    (0..padding).for_each(|_| self.editor_contents.push(' '));
+
+                    self.editor_contents.push_str(&welcome);
+                } else {
                     self.editor_contents.push('~');
-                    padding -= 1;
                 }
-                (0..padding).for_each(|_| self.editor_contents.push(' '));
-
-                self.editor_contents.push_str(&welcome);
             } else {
-                self.editor_contents.push('~');
-            }
+                let len = cmp::min(self.editor_rows.get_row().len(), screen_columns);
 
+                self.editor_contents
+                    .push_str(&self.editor_rows.get_row()[..len])
+            }
             queue!(
                 self.editor_contents,
                 terminal::Clear(ClearType::UntilNewLine)
-            ).unwrap();
+            )
+            .unwrap();
 
             if i < screen_rows - 1 {
                 self.editor_contents.push_str("\r\n");
@@ -141,10 +150,7 @@ impl Output {
         // (provided by crossterm)
         // Hide the cursor before updates and relocate it to the top left
         // Show it back when update finishes
-        queue!(
-            self.editor_contents,
-            cursor::Hide,
-            cursor::MoveTo(0, 0))?;
+        queue!(self.editor_contents, cursor::Hide, cursor::MoveTo(0, 0))?;
 
         self.draw_rows();
 
@@ -165,7 +171,7 @@ impl Output {
         self.cursor_controller.move_cursor(direction);
     }
 }
- 
+
 // Reader struct is used to read keypresses by the user
 struct Reader;
 
@@ -183,19 +189,40 @@ impl Reader {
     }
 }
 
+// Used to store contents of rows in the
+struct EditorRows {
+    row_contents: Vec<Box<str>>,
+}
+
+impl EditorRows {
+    fn new() -> Self {
+        Self {
+            row_contents: vec!["Hello World".into()],
+        }
+    }
+
+    fn number_of_rows(&self) -> usize {
+        1
+    }
+
+    fn get_row(&self) -> &str {
+        &self.row_contents[0]
+    }
+}
+
 // The actual text editor struct, includes the key
 // press reader and also the output that will be displayed
 // in this text editor.
 struct Editor {
-    reader : Reader,
-    output: Output
+    reader: Reader,
+    output: Output,
 }
 
 impl Editor {
     fn new() -> Self {
-        Self { 
-            reader : Reader,
-            output : Output::new(),
+        Self {
+            reader: Reader,
+            output: Output::new(),
         }
     }
 
@@ -209,8 +236,8 @@ impl Editor {
                 modifiers: event::KeyModifiers::CONTROL,
             } => return Ok(false),
             KeyEvent {
-                code: direction @ (
-                    KeyCode::Up
+                code:
+                    direction @ (KeyCode::Up
                     | KeyCode::Down
                     | KeyCode::Left
                     | KeyCode::Right
@@ -272,7 +299,7 @@ impl io::Write for EditorContents {
                 self.content.push_str(s);
                 Ok(s.len())
             }
-            Err(_) => Err(io::ErrorKind::WriteZero.into())
+            Err(_) => Err(io::ErrorKind::WriteZero.into()),
         }
     }
 
