@@ -1,9 +1,10 @@
 use ::crossterm::event::*;
 use ::crossterm::terminal::ClearType;
 use ::crossterm::{cursor, event, execute, queue, terminal};
-use std::cmp;
 use std::io::{self, stdout, Write};
+use std::path::Path;
 use std::time::Duration;
+use std::{cmp, env, fs};
 
 // Cleanup struct is used to disable raw mode
 // Called at the start of main() and when it goes
@@ -128,10 +129,10 @@ impl Output {
                     self.editor_contents.push('~');
                 }
             } else {
-                let len = cmp::min(self.editor_rows.get_row().len(), screen_columns);
+                let len = cmp::min(self.editor_rows.get_row(i).len(), screen_columns);
 
                 self.editor_contents
-                    .push_str(&self.editor_rows.get_row()[..len])
+                    .push_str(&self.editor_rows.get_row(i)[..len])
             }
             queue!(
                 self.editor_contents,
@@ -196,17 +197,30 @@ struct EditorRows {
 
 impl EditorRows {
     fn new() -> Self {
+        let mut arg = env::args();
+
+        match arg.nth(1) {
+            None => Self {
+                row_contents: Vec::new(),
+            },
+            Some(file) => Self::from_file(file.as_ref()),
+        }
+    }
+
+    fn from_file(file: &Path) -> Self {
+        let file_contents = fs::read_to_string(file).expect("Unable to read file");
+
         Self {
-            row_contents: vec!["Hello World".into()],
+            row_contents: file_contents.lines().map(|it| it.into()).collect(),
         }
     }
 
     fn number_of_rows(&self) -> usize {
-        1
+        self.row_contents.len()
     }
 
-    fn get_row(&self) -> &str {
-        &self.row_contents[0]
+    fn get_row(&self, at: usize) -> &str {
+        &self.row_contents[at]
     }
 }
 
