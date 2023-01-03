@@ -167,6 +167,7 @@ struct Output {
     cursor_controller: CursorController,
     editor_rows: EditorRows,
     status_message: StatusMessage,
+    dirty: u64,
 }
 
 impl Output {
@@ -183,6 +184,7 @@ impl Output {
             cursor_controller: CursorController::new(win_size),
             editor_rows: EditorRows::new(),
             status_message: StatusMessage::new("Help: CTRL + s to Save | CTRL + q to Quit.".into()),
+            dirty: 0,
         }
     }
 
@@ -204,6 +206,10 @@ impl Output {
             .insert_char(self.cursor_controller.cursor_x, ch);
 
         self.cursor_controller.cursor_x += 1;
+
+        // tracks that file has been modified
+        // counts the amount of changes
+        self.dirty += 1;
     }
 
     fn draw_rows(&mut self) {
@@ -270,13 +276,14 @@ impl Output {
             .push_str(&style::Attribute::Reverse.to_string());
 
         let info = format!(
-            "{} -- {} lines",
+            "{} {} -- {} lines",
             self.editor_rows
                 .filename
                 .as_ref()
                 .and_then(|path| path.file_name())
                 .and_then(|name| name.to_str())
                 .unwrap_or("[No Name]"),
+            if self.dirty > 0 { "(modified)" } else {""},
             self.editor_rows.number_of_rows()
         );
 
@@ -551,6 +558,7 @@ impl Editor {
                 self.output
                     .status_message
                     .set_message(format!("{} bytes written to disk", len));
+                self.output.dirty = 0;
             })?,
             KeyEvent {
                 // Used to handle a user input to the text 'editor'
