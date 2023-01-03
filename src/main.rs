@@ -221,15 +221,17 @@ impl Output {
     }
 
     fn draw_status_bar(&mut self) {
-        self.editor_contents.push_str(&style::Attribute::Reverse.to_string());
+        self.editor_contents
+            .push_str(&style::Attribute::Reverse.to_string());
 
         let info = format!(
             "{} -- {} lines",
-            self.editor_rows.filename
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("[No Name]"),
+            self.editor_rows
+                .filename
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .unwrap_or("[No Name]"),
             self.editor_rows.number_of_rows()
         );
 
@@ -240,21 +242,19 @@ impl Output {
             self.cursor_controller.cursor_y + 1,
             self.editor_rows.number_of_rows()
         );
-
+        
         self.editor_contents.push_str(&info[..info_len]);
-
         for i in info_len..self.win_size.0 {
             if self.win_size.0 - i == line_info.len() {
                 self.editor_contents.push_str(&line_info);
                 break;
             } else {
-                self.editor_contents.push(' ');
+                self.editor_contents.push(' ')
             }
         }
-        
-        (0..self.win_size.0).for_each(|_| self.editor_contents.push(' '));
-        
-        self.editor_contents.push_str(&style::Attribute::Reset.to_string());
+
+        self.editor_contents
+            .push_str(&style::Attribute::Reset.to_string());
     }
 
     fn refresh_screen(&mut self) -> crossterm::Result<()> {
