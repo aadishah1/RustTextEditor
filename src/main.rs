@@ -283,7 +283,7 @@ impl Output {
                 .and_then(|path| path.file_name())
                 .and_then(|name| name.to_str())
                 .unwrap_or("[No Name]"),
-            if self.dirty > 0 { "(modified)" } else {""},
+            if self.dirty > 0 { "(modified)" } else { "" },
             self.editor_rows.number_of_rows()
         );
 
@@ -507,13 +507,17 @@ impl EditorRows {
 struct Editor {
     reader: Reader,
     output: Output,
+    quit_times: u8,
 }
+
+const QUIT_TIMES: u8 = 2;
 
 impl Editor {
     fn new() -> Self {
         Self {
             reader: Reader,
             output: Output::new(),
+            quit_times: QUIT_TIMES,
         }
     }
 
@@ -525,7 +529,19 @@ impl Editor {
             KeyEvent {
                 code: KeyCode::Char('q'),
                 modifiers: event::KeyModifiers::CONTROL,
-            } => return Ok(false),
+            } => {
+                if self.output.dirty > 0 && self.quit_times > 0 {
+                    self.output.status_message.set_message(format!(
+                        "WARNING! File has unsaved changes. Press Ctrl+q {} more times to quit.",
+                        self.quit_times
+                    ));
+                    // decrement quit times each time Ctrl+q is pressed
+                    self.quit_times -= 1;
+                    return Ok(true);
+                }
+
+                return Ok(false);
+            }
             KeyEvent {
                 code:
                     direction @ (KeyCode::Up
