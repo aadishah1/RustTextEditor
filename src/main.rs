@@ -73,7 +73,7 @@ impl CursorController {
                 }
             }
             KeyCode::Down => {
-                if self.cursor_y < number_of_rows - 1 {
+                if self.cursor_y < number_of_rows {
                     self.cursor_y += 1;
                 }
             }
@@ -187,6 +187,18 @@ impl Output {
         // to the top left
         execute!(stdout(), terminal::Clear(ClearType::All))?;
         execute!(stdout(), cursor::MoveTo(0, 0))
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        if self.cursor_controller.cursor_y == self.editor_rows.number_of_rows() {
+            self.editor_rows.insert_row()
+        }
+
+        self.editor_rows
+            .get_editor_row_mut(self.cursor_controller.cursor_y)
+            .insert_char(self.cursor_controller.cursor_x, ch);
+        
+        self.cursor_controller.cursor_x += 1;
     }
 
     fn draw_rows(&mut self) {
@@ -350,17 +362,25 @@ impl Reader {
     }
 }
 
+// Used to store row content and row render
+// content
+#[derive(Default)]
 struct Row {
-    row_content: Box<str>,
+    row_content: String,
     render: String,
 }
 
 impl Row {
-    fn new(row_content: Box<str>, render: String) -> Self {
+    fn new(row_content: String, render: String) -> Self {
         Self {
             row_content,
             render,
         }
+    }
+
+    fn insert_char(&mut self, at: usize, ch: char) {
+        self.row_content.insert(at, ch);
+        EditorRows::render_row(self);
     }
 }
 
@@ -405,6 +425,14 @@ impl EditorRows {
                 row.render.push(c);
             }
         });
+    }
+
+    fn insert_row(&mut self) {
+        self.row_contents.push(Row::default());
+    }
+
+    fn get_editor_row_mut(&mut self, at: usize) -> &mut Row {
+        &mut self.row_contents[at]
     }
 
     fn from_file(file: PathBuf) -> Self {
@@ -489,7 +517,20 @@ impl Editor {
                         self.output.editor_rows.number_of_rows(),
                     );
                 }
-            }
+            },
+            KeyEvent {
+                // Used to handle a user input to the text 'editor'
+                // Handles any other key pressed by the user
+                // That isn't already mapped above.
+                // Also prevents modifiers like Ctrl to be used to enter
+                // characters (Ex: Ctrl + X shouldn't insert X).
+                code: code @ (KeyCode::Char(..) | KeyCode::Tab),
+                modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+            } => self.output.insert_char(match code {
+                KeyCode::Tab => '\t',
+                KeyCode::Char(ch) => ch,
+                _ => unreachable!(),
+            }),
             _ => {}
         }
 
