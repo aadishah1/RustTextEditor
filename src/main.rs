@@ -212,6 +212,22 @@ impl Output {
         self.dirty += 1;
     }
 
+    fn delete_char(&mut self) {
+        if self.cursor_controller.cursor_y == self.editor_rows.number_of_rows() {
+            return;
+        }
+
+        let row = self
+                .editor_rows
+                .get_editor_row_mut(self.cursor_controller.cursor_y);
+        
+        if self.cursor_controller.cursor_x > 0 {
+            row.delete_char(self.cursor_controller.cursor_x - 1);
+            self.cursor_controller.cursor_x -= 1;
+            self.dirty += 1;
+        }
+    }
+
     fn draw_rows(&mut self) {
         // Draws each row in the terminal window based on the size
         // saved when initialized. Includes drawing the ~ at the start
@@ -392,6 +408,11 @@ impl Row {
 
     fn insert_char(&mut self, at: usize, ch: char) {
         self.row_content.insert(at, ch);
+        EditorRows::render_row(self);
+    }
+
+    fn delete_char(&mut self, at: usize) {
+        self.row_content.remove(at);
         EditorRows::render_row(self);
     }
 }
@@ -576,6 +597,22 @@ impl Editor {
                     .set_message(format!("{} bytes written to disk", len));
                 self.output.dirty = 0;
             })?,
+            KeyEvent {
+                code: key @ (KeyCode::Backspace | KeyCode::Delete),
+                modifiers: KeyModifiers::NONE,
+            } => {
+                // Delete means delete char to the right
+                // this is done by moving the cursor to the right
+                // one step.
+
+                // Then regardless of whether Backspace or Delete
+                // is pressed, the appropriate function occurs
+                if matches!(key, KeyCode::Delete) {
+                    self.output.move_cursor(KeyCode::Right)
+                }
+
+                self.output.delete_char();
+            }
             KeyEvent {
                 // Used to handle a user input to the text 'editor'
                 // Handles any other key pressed by the user
