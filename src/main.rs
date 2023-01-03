@@ -1,6 +1,6 @@
 use ::crossterm::event::*;
 use ::crossterm::terminal::ClearType;
-use ::crossterm::{cursor, event, execute, queue, terminal};
+use ::crossterm::{cursor, event, execute, queue, style, terminal};
 use std::io::{self, stdout, Write};
 use std::path::Path;
 use std::time::Duration;
@@ -143,7 +143,7 @@ impl Output {
         // and instantiate the output with the window size
         // and the contents that will go there
         let win_size = terminal::size()
-            .map(|(x, y)| (x as usize, y as usize))
+            .map(|(x, y)| (x as usize, y as usize - 1))
             .unwrap();
         Self {
             win_size,
@@ -216,10 +216,16 @@ impl Output {
             )
             .unwrap();
 
-            if i < screen_rows - 1 {
-                self.editor_contents.push_str("\r\n");
-            }
+            self.editor_contents.push_str("\r\n");
         }
+    }
+
+    fn draw_status_bar(&mut self) {
+        self.editor_contents.push_str(&style::Attribute::Reverse.to_string());
+        
+        (0..self.win_size.0).for_each(|_| self.editor_contents.push(' '));
+        
+        self.editor_contents.push_str(&style::Attribute::Reset.to_string());
     }
 
     fn refresh_screen(&mut self) -> crossterm::Result<()> {
@@ -232,6 +238,7 @@ impl Output {
         queue!(self.editor_contents, cursor::Hide, cursor::MoveTo(0, 0))?;
 
         self.draw_rows();
+        self.draw_status_bar();
 
         // Move the cursor to particular location based on
         // the cursor controller class
