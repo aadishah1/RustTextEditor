@@ -3,7 +3,7 @@ use ::crossterm::terminal::ClearType;
 use ::crossterm::{cursor, event, execute, queue, style, terminal};
 use std::io::{self, stdout, Write};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{cmp, env, fs};
 
 // Cleanup struct is used to disable raw mode
@@ -125,6 +125,32 @@ impl CursorController {
     }
 }
 
+struct StatusMessage {
+    message: Option<String>,
+    set_time: Option<Instant>,
+}
+
+impl StatusMessage {
+    fn new(initial_message: String) -> Self {
+        Self {
+            message: Some(initial_message),
+            set_time: Some(Instant::now()),
+        }
+    }
+
+    fn message(&mut self) -> Option<&String> {
+        self.set_time.and_then(|time| {
+            if time.elapsed() > Duration::from_secs(5) {
+                self.message = None;
+                self.set_time = None;
+                None
+            } else {
+                Some(self.message.as_ref().unwrap())
+            }
+        })
+    }
+}
+
 // Output struct is used to handle the output to the
 // terminal screen. This includes the ~ at the start of
 // each line like Vim and also used to ensure that
@@ -135,6 +161,7 @@ struct Output {
     editor_contents: EditorContents,
     cursor_controller: CursorController,
     editor_rows: EditorRows,
+    status_message: StatusMessage,
 }
 
 impl Output {
@@ -143,13 +170,14 @@ impl Output {
         // and instantiate the output with the window size
         // and the contents that will go there
         let win_size = terminal::size()
-            .map(|(x, y)| (x as usize, y as usize - 1))
+            .map(|(x, y)| (x as usize, y as usize - 2))
             .unwrap();
         Self {
             win_size,
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
             editor_rows: EditorRows::new(),
+            status_message: StatusMessage::new("Help: Ctrl + q to quit.".into()),
         }
     }
 
@@ -242,7 +270,7 @@ impl Output {
             self.cursor_controller.cursor_y + 1,
             self.editor_rows.number_of_rows()
         );
-        
+
         self.editor_contents.push_str(&info[..info_len]);
         for i in info_len..self.win_size.0 {
             if self.win_size.0 - i == line_info.len() {
@@ -253,8 +281,24 @@ impl Output {
             }
         }
 
+        self.editor_contents.push_str("\r\n");
         self.editor_contents
             .push_str(&style::Attribute::Reset.to_string());
+
+    }
+
+    fn draw_message_bar(&mut self) {
+        // Draws out any message passed in at the very bottom
+        // of the screen
+        queue!(
+            self.editor_contents,
+            terminal::Clear(ClearType::UntilNewLine)
+        ).unwrap();
+
+        if let Some(msg) = self.status_message.message() {
+            self.editor_contents
+                .push_str(&msg[..cmp::min(self.win_size.0, msg.len())]);
+        }
     }
 
     fn refresh_screen(&mut self) -> crossterm::Result<()> {
@@ -268,6 +312,7 @@ impl Output {
 
         self.draw_rows();
         self.draw_status_bar();
+        self.draw_message_bar();
 
         // Move the cursor to particular location based on
         // the cursor controller class
