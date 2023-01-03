@@ -2,7 +2,7 @@ use ::crossterm::event::*;
 use ::crossterm::terminal::ClearType;
 use ::crossterm::{cursor, event, execute, queue, style, terminal};
 use std::io::{self, stdout, Write};
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::{cmp, env, fs};
 
@@ -73,7 +73,7 @@ impl CursorController {
                 }
             }
             KeyCode::Down => {
-                if self.cursor_y < number_of_rows {
+                if self.cursor_y < number_of_rows - 1 {
                     self.cursor_y += 1;
                 }
             }
@@ -222,6 +222,35 @@ impl Output {
 
     fn draw_status_bar(&mut self) {
         self.editor_contents.push_str(&style::Attribute::Reverse.to_string());
+
+        let info = format!(
+            "{} -- {} lines",
+            self.editor_rows.filename
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("[No Name]"),
+            self.editor_rows.number_of_rows()
+        );
+
+        let info_len = cmp::min(info.len(), self.win_size.0);
+
+        let line_info = format!(
+            "{}/{}",
+            self.cursor_controller.cursor_y + 1,
+            self.editor_rows.number_of_rows()
+        );
+
+        self.editor_contents.push_str(&info[..info_len]);
+
+        for i in info_len..self.win_size.0 {
+            if self.win_size.0 - i == line_info.len() {
+                self.editor_contents.push_str(&line_info);
+                break;
+            } else {
+                self.editor_contents.push(' ');
+            }
+        }
         
         (0..self.win_size.0).for_each(|_| self.editor_contents.push(' '));
         
@@ -294,6 +323,7 @@ const TAB_STOP: usize = 8;
 // Used to store contents of rows in the
 struct EditorRows {
     row_contents: Vec<Row>,
+    filename: Option<PathBuf>,
 }
 
 impl EditorRows {
@@ -303,8 +333,9 @@ impl EditorRows {
         match arg.nth(1) {
             None => Self {
                 row_contents: Vec::new(),
+                filename: None,
             },
-            Some(file) => Self::from_file(file.as_ref()),
+            Some(file) => Self::from_file(file.into()),
         }
     }
 
@@ -331,10 +362,11 @@ impl EditorRows {
         });
     }
 
-    fn from_file(file: &Path) -> Self {
-        let file_contents = fs::read_to_string(file).expect("Unable to read file");
+    fn from_file(file: PathBuf) -> Self {
+        let file_contents = fs::read_to_string(&file).expect("Unable to read file");
 
         Self {
+            filename: Some(file),
             row_contents: file_contents
                 .lines()
                 .map(|it| {
