@@ -138,6 +138,11 @@ impl StatusMessage {
         }
     }
 
+    fn set_message(&mut self, message: String) {
+        self.message = Some(message);
+        self.set_time = Some(Instant::now())
+    }
+
     fn message(&mut self) -> Option<&String> {
         self.set_time.and_then(|time| {
             if time.elapsed() > Duration::from_secs(5) {
@@ -177,7 +182,7 @@ impl Output {
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
             editor_rows: EditorRows::new(),
-            status_message: StatusMessage::new("Help: Ctrl + q to quit.".into()),
+            status_message: StatusMessage::new("Help: CTRL + s to Save | CTRL + q to Quit.".into()),
         }
     }
 
@@ -197,7 +202,7 @@ impl Output {
         self.editor_rows
             .get_editor_row_mut(self.cursor_controller.cursor_y)
             .insert_char(self.cursor_controller.cursor_x, ch);
-        
+
         self.cursor_controller.cursor_x += 1;
     }
 
@@ -296,7 +301,6 @@ impl Output {
         self.editor_contents.push_str("\r\n");
         self.editor_contents
             .push_str(&style::Attribute::Reset.to_string());
-
     }
 
     fn draw_message_bar(&mut self) {
@@ -305,7 +309,8 @@ impl Output {
         queue!(
             self.editor_contents,
             terminal::Clear(ClearType::UntilNewLine)
-        ).unwrap();
+        )
+        .unwrap();
 
         if let Some(msg) = self.status_message.message() {
             self.editor_contents
@@ -466,6 +471,27 @@ impl EditorRows {
     fn get_row(&self, at: usize) -> &str {
         &self.row_contents[at].row_content
     }
+
+    fn save(&self) -> io::Result<usize> {
+        match &self.filename {
+            None => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "no file name specified",
+            )),
+            Some(name) => {
+                let mut file = fs::OpenOptions::new().write(true).create(true).open(name)?;
+                let contents: String = self
+                    .row_contents
+                    .iter()
+                    .map(|it| it.row_content.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n");
+                file.set_len(contents.len() as u64)?;
+                file.write_all(contents.as_bytes())?;
+                Ok(contents.as_bytes().len())
+            }
+        }
+    }
 }
 
 // The actual text editor struct, includes the key
@@ -517,7 +543,15 @@ impl Editor {
                         self.output.editor_rows.number_of_rows(),
                     );
                 }
-            },
+            }
+            KeyEvent {
+                code: KeyCode::Char('s'),
+                modifiers: KeyModifiers::CONTROL,
+            } => self.output.editor_rows.save().map(|len| {
+                self.output
+                    .status_message
+                    .set_message(format!("{} bytes written to disk", len));
+            })?,
             KeyEvent {
                 // Used to handle a user input to the text 'editor'
                 // Handles any other key pressed by the user
