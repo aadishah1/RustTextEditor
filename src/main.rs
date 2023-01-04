@@ -1,5 +1,6 @@
 use ::crossterm::event::*;
 use ::crossterm::terminal::ClearType;
+use ::crossterm::style::*;
 use ::crossterm::{cursor, event, execute, queue, style, terminal};
 use std::io::{self, stdout, Write};
 use std::path::PathBuf;
@@ -511,7 +512,17 @@ impl Output {
 
                 let start = if len == 0 { 0 } else { column_offset };
 
-                self.editor_contents.push_str(&row[start..start + len]);
+                row[start..start + len].chars().for_each(|c| {
+                    if c.is_digit(10) {
+                        let _ = queue!(self.editor_contents, SetForegroundColor(Color::Cyan));
+                        self.editor_contents.push(c);
+                        let _ = queue!(self.editor_contents, ResetColor);
+                    } else {
+                        self.editor_contents.push(c);
+                    }
+                });
+
+                // self.editor_contents.push_str(&row[start..start + len]);
             }
             queue!(
                 self.editor_contents,
