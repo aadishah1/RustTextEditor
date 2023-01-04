@@ -1,6 +1,6 @@
 use ::crossterm::event::*;
-use ::crossterm::terminal::ClearType;
 use ::crossterm::style::*;
+use ::crossterm::terminal::ClearType;
 use ::crossterm::{cursor, event, execute, queue, style, terminal};
 use std::io::{self, stdout, Write};
 use std::path::PathBuf;
@@ -36,8 +36,7 @@ macro_rules! prompt {
                     }
                 }
                 KeyEvent {
-                    code: KeyCode::Esc,
-                    ..
+                    code: KeyCode::Esc, ..
                 } => {
                     output.status_message.set_message(String::new());
                     input.clear();
@@ -64,7 +63,11 @@ macro_rules! prompt {
             $callback(output, &input, key_event.code);
         }
 
-        if input.is_empty() {None} else {Some(input)}
+        if input.is_empty() {
+            None
+        } else {
+            Some(input)
+        }
     }};
 }
 
@@ -249,6 +252,10 @@ impl SearchIndex {
     }
 }
 
+syntax_struct! {
+    struct RustHighlight;
+}
+
 // Output struct is used to handle the output to the
 // terminal screen. This includes the ~ at the start of
 // each line like Vim and also used to ensure that
@@ -262,6 +269,7 @@ struct Output {
     status_message: StatusMessage,
     dirty: u64,
     search_index: SearchIndex,
+    syntax_highlight: Option<Box<dyn SyntaxHighlight>>,
 }
 
 impl Output {
@@ -272,14 +280,19 @@ impl Output {
         let win_size = terminal::size()
             .map(|(x, y)| (x as usize, y as usize - 2))
             .unwrap();
+
+        let syntax_highlight: Option<Box<dyn SyntaxHighlight>> = Some(Box::new(RustHighlight));
         Self {
             win_size,
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
-            editor_rows: EditorRows::new(),
-            status_message: StatusMessage::new("Help: CTRL + S to Save | CTRL + F to Find | CTRL + Q to Quit.".into()),
+            editor_rows: EditorRows::new(syntax_highlight.as_deref()),
+            status_message: StatusMessage::new(
+                "Help: CTRL + S to Save | CTRL + F to Find | CTRL + Q to Quit.".into(),
+            ),
             dirty: 0,
             search_index: SearchIndex::new(),
+            syntax_highlight,
         }
     }
 
@@ -302,6 +315,13 @@ impl Output {
         self.editor_rows
             .get_editor_row_mut(self.cursor_controller.cursor_y)
             .insert_char(self.cursor_controller.cursor_x, ch);
+
+        if let Some(it) = self.syntax_highlight.as_ref() {
+            it.update_syntax(
+                self.cursor_controller.cursor_y,
+                &mut self.editor_rows.row_contents,
+            );
+        }
 
         self.cursor_controller.cursor_x += 1;
 
@@ -329,6 +349,18 @@ impl Output {
             EditorRows::render_row(current_row);
             self.editor_rows
                 .insert_row(self.cursor_controller.cursor_y + 1, new_row_content);
+
+            if let Some(it) = self.syntax_highlight.as_ref() {
+                it.update_syntax(
+                    self.cursor_controller.cursor_y,
+                    &mut self.editor_rows.row_contents,
+                );
+
+                it.update_syntax(
+                    self.cursor_controller.cursor_y + 1,
+                    &mut self.editor_rows.row_contents,
+                )
+            }
         }
 
         self.cursor_controller.cursor_x = 0;
@@ -361,6 +393,14 @@ impl Output {
 
             self.cursor_controller.cursor_y -= 1;
         }
+
+        if let Some(it) = self.syntax_highlight.as_ref() {
+            it.update_syntax(
+                self.cursor_controller.cursor_y,
+                &mut self.editor_rows.row_contents,
+            );
+        };
+
         self.dirty += 1;
     }
 
@@ -420,13 +460,13 @@ impl Output {
                         None => row.render.find(&keyword),
                         Some(dir) => {
                             let index = if matches!(dir, SearchDirection::Forward) {
-                                let start = cmp::min(row.render.len(),
-                                    output.search_index.x_index + 1);
+                                let start =
+                                    cmp::min(row.render.len(), output.search_index.x_index + 1);
 
                                 row.render[start..]
                                     .find(&keyword)
                                     .map(|index| index + start)
-                            } else{
+                            } else {
                                 row.render[..output.search_index.x_index].rfind(&keyword)
                             };
 
@@ -454,12 +494,14 @@ impl Output {
 
     fn find(&mut self) -> io::Result<()> {
         let cursor_controller = self.cursor_controller;
-        
+
         if prompt!(
             self,
             "Search: {} (ESC to cancel, Arrows to find next matches, Enter to find)",
             callback = Output::find_callback
-        ).is_none() {
+        )
+        .is_none()
+        {
             self.cursor_controller = cursor_controller;
         }
         Ok(())
@@ -496,13 +538,14 @@ impl Output {
                     self.editor_contents.push('~');
                 }
             } else {
-                let row = self.editor_rows.get_render(file_row);
+                let row = self.editor_rows.get_editor_row(file_row);
+                let render = &row.render;
                 let column_offset = self.cursor_controller.column_offset;
 
-                let len = if row.len() < column_offset {
+                let len = if row.row_content.len() < column_offset {
                     0
                 } else {
-                    let len = row.len() - column_offset;
+                    let len = row.row_content.len() - column_offset;
                     if len > screen_columns {
                         screen_columns
                     } else {
@@ -512,17 +555,16 @@ impl Output {
 
                 let start = if len == 0 { 0 } else { column_offset };
 
-                row[start..start + len].chars().for_each(|c| {
-                    if c.is_digit(10) {
-                        let _ = queue!(self.editor_contents, SetForegroundColor(Color::Cyan));
-                        self.editor_contents.push(c);
-                        let _ = queue!(self.editor_contents, ResetColor);
-                    } else {
-                        self.editor_contents.push(c);
-                    }
-                });
-
-                // self.editor_contents.push_str(&row[start..start + len]);
+                self.syntax_highlight
+                    .as_ref()
+                    .map(|syntax_highlight| {
+                        syntax_highlight.color_row(
+                            &render[start..start + len],
+                            &row.highlight[start..start + len],
+                            &mut self.editor_contents,
+                        )
+                    })
+                    .unwrap_or_else(|| self.editor_contents.push_str(&render[start..start + len]));
             }
             queue!(
                 self.editor_contents,
@@ -637,12 +679,72 @@ impl Reader {
     }
 }
 
+enum HighlightType {
+    Normal,
+    Number,
+}
+
+trait SyntaxHighlight {
+    fn syntax_color(&self, highlight_type: &HighlightType) -> Color;
+    fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>);
+
+    fn color_row(&self, render: &str, highlight: &[HighlightType], out: &mut EditorContents) {
+        render.chars().enumerate().for_each(|(i, c)| {
+            let _ = queue!(out, SetForegroundColor(self.syntax_color(&highlight[i])));
+            out.push(c);
+            let _ = queue!(out, ResetColor);
+        });
+    }
+}
+
+// syntax highlight macro
+#[macro_export]
+macro_rules! syntax_struct {
+    (
+        struct $Name:ident;
+    ) => {
+        struct $Name;
+
+        impl SyntaxHighlight for $Name {
+            fn syntax_color(&self, highlight_color: &HighlightType) -> Color {
+                match highlight_color {
+                    HighlightType::Normal => Color::Reset,
+                    HighlightType::Number => Color::Cyan,
+                }
+            }
+
+            fn update_syntax(&self, at: usize, editor_rows: &mut Vec<Row>) {
+                let current_row = &mut editor_rows[at];
+                macro_rules! add {
+                    ($h:expr) => {
+                        current_row.highlight.push($h)
+                    };
+                }
+
+                current_row.highlight = Vec::with_capacity(current_row.render.len());
+                let chars = current_row.render.chars();
+
+                for c in chars {
+                    if c.is_digit(10) {
+                        add!(HighlightType::Number);
+                    } else {
+                        add!(HighlightType::Normal);
+                    }
+                }
+
+                assert_eq!(current_row.render.len(), current_row.highlight.len())
+            }
+        }
+    };
+}
+
 // Used to store row content and row render
 // content
 #[derive(Default)]
 struct Row {
     row_content: String,
     render: String,
+    highlight: Vec<HighlightType>,
 }
 
 impl Row {
@@ -650,6 +752,7 @@ impl Row {
         Self {
             row_content,
             render,
+            highlight: Vec::new(),
         }
     }
 
@@ -690,7 +793,8 @@ struct EditorRows {
 }
 
 impl EditorRows {
-    fn new() -> Self {
+    // Start modifying here
+    fn new(syntax_highlight: Option<&dyn SyntaxHighlight>) -> Self {
         let mut arg = env::args();
 
         match arg.nth(1) {
@@ -698,7 +802,7 @@ impl EditorRows {
                 row_contents: Vec::new(),
                 filename: None,
             },
-            Some(file) => Self::from_file(file.into()),
+            Some(file) => Self::from_file(file.into(), syntax_highlight),
         }
     }
 
@@ -744,19 +848,22 @@ impl EditorRows {
         &mut self.row_contents[at]
     }
 
-    fn from_file(file: PathBuf) -> Self {
+    fn from_file(file: PathBuf, syntax_highlight: Option<&dyn SyntaxHighlight>) -> Self {
         let file_contents = fs::read_to_string(&file).expect("Unable to read file");
+        let mut row_contents = Vec::new();
+        file_contents.lines().enumerate().for_each(|(i, line)| {
+            let mut row = Row::new(line.into(), String::new());
+            Self::render_row(&mut row);
+            row_contents.push(row);
+
+            if let Some(it) = syntax_highlight {
+                it.update_syntax(i, &mut row_contents)
+            }
+        });
 
         Self {
             filename: Some(file),
-            row_contents: file_contents
-                .lines()
-                .map(|it| {
-                    let mut row = Row::new(it.into(), String::new());
-                    Self::render_row(&mut row);
-                    row
-                })
-                .collect(),
+            row_contents,
         }
     }
 
@@ -869,7 +976,8 @@ impl Editor {
                 modifiers: KeyModifiers::CONTROL,
             } => {
                 if matches!(self.output.editor_rows.filename, None) {
-                    let prompt = prompt!(&mut self.output, "Save as: {} (ESC to cancel)").map(|it| it.into());
+                    let prompt = prompt!(&mut self.output, "Save as: {} (ESC to cancel)")
+                        .map(|it| it.into());
 
                     if let None = prompt {
                         self.output
