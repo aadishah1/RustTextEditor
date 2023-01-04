@@ -83,6 +83,7 @@ impl Drop for Cleanup {
 
 // Used to move around the cursor based on
 // some user key presses
+#[derive(Clone, Copy)]
 struct CursorController {
     cursor_x: usize,
     cursor_y: usize,
@@ -348,11 +349,15 @@ impl Output {
     }
 
     fn find(&mut self) -> io::Result<()> {
-        prompt!(
+        let cursor_controller = self.cursor_controller;
+        
+        if prompt!(
             self,
             "Search: {} (ESC to cancel)",
             callback = Output::find_callback
-        );
+        ).is_none() {
+            self.cursor_controller = cursor_controller;
+        }
         Ok(())
     }
 
