@@ -10,7 +10,7 @@ use std::{cmp, env, fs};
 #[macro_export]
 macro_rules! prompt {
     ($output:expr,$($args:tt)*) => {{
-        let output: &mut Output = &mut $output;
+        let output: &mut Output = $output;
         let mut input = String::with_capacity(32);
 
         loop {
@@ -236,7 +236,7 @@ impl Output {
             editor_contents: EditorContents::new(),
             cursor_controller: CursorController::new(win_size),
             editor_rows: EditorRows::new(),
-            status_message: StatusMessage::new("Help: CTRL + s to Save | CTRL + q to Quit.".into()),
+            status_message: StatusMessage::new("Help: CTRL + S to Save | CTRL + F to Find | CTRL + Q to Quit.".into()),
             dirty: 0,
         }
     }
@@ -320,6 +320,23 @@ impl Output {
             self.cursor_controller.cursor_y -= 1;
         }
         self.dirty += 1;
+    }
+
+    fn find(&mut self) -> io::Result<()> {
+        if let Some(keyword) = prompt!(self, "Search: {} (ESC to cancel)") {
+            for i in 0..self.editor_rows.number_of_rows() {
+                let row = self.editor_rows.get_editor_row(i);
+
+                if let Some(index) = row.render.find(&keyword) {
+                    self.cursor_controller.cursor_y = i;
+                    self.cursor_controller.cursor_x = row.get_row_content_x(index);
+                    self.cursor_controller.row_offset = self.editor_rows.number_of_rows();
+                    break;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn draw_rows(&mut self) {
@@ -508,6 +525,24 @@ impl Row {
     fn delete_char(&mut self, at: usize) {
         self.row_content.remove(at);
         EditorRows::render_row(self);
+    }
+
+    fn get_row_content_x(&self, render_x: usize) -> usize {
+        let mut current_render_x = 0;
+
+        for (cursor_x, ch) in self.row_content.chars().enumerate() {
+            if ch == '\t' {
+                current_render_x += (TAB_STOP - 1) - (current_render_x % TAB_STOP);
+            }
+
+            current_render_x += 1;
+
+            if current_render_x > render_x {
+                return cursor_x;
+            }
+        }
+
+        0
     }
 }
 
@@ -717,6 +752,12 @@ impl Editor {
                         .set_message(format!("{} bytes written to disk", len));
                     self.output.dirty = 0;
                 })?;
+            }
+            KeyEvent {
+                code: KeyCode::Char('g'),
+                modifiers: KeyModifiers::CONTROL,
+            } => {
+                self.output.find()?;
             }
             KeyEvent {
                 code: key @ (KeyCode::Backspace | KeyCode::Delete),
