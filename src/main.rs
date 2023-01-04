@@ -9,21 +9,28 @@ use std::{cmp, env, fs};
 // PROMPT MACRO TEXTUAL DEFINITION
 #[macro_export]
 macro_rules! prompt {
-    ($output:expr,$($args:tt)*) => {{
+    ($output:expr,$args:tt) => {
+        prompt!($output, $args, callback = |&_, _, _| {})
+    };
+
+    ($output:expr,$args:tt, callback = $callback:expr) => {{
         let output: &mut Output = $output;
         let mut input = String::with_capacity(32);
 
         loop {
-            output.status_message.set_message(format!($($args)*, input));
+            output.status_message.set_message(format!($args, input));
             output.refresh_screen()?;
 
-            match Reader.read_key()? {
+            let key_event = Reader.read_key()?;
+
+            match key_event {
                 KeyEvent {
                     code: KeyCode::Enter,
                     modifiers: KeyModifiers::NONE,
                 } => {
                     if !input.is_empty() {
                         output.status_message.set_message(String::new());
+                        $callback(output, &input, KeyCode::Enter);
                         break;
                     }
                 }
@@ -33,6 +40,7 @@ macro_rules! prompt {
                 } => {
                     output.status_message.set_message(String::new());
                     input.clear();
+                    $callback(output, &input, KeyCode::Esc);
                     break;
                 }
                 KeyEvent {
@@ -51,12 +59,12 @@ macro_rules! prompt {
                 }),
                 _ => {}
             }
+
+            $callback(output, &input, key_event.code);
         }
 
         if input.is_empty() {None} else {Some(input)}
-    }
-
-    };
+    }};
 }
 
 // Cleanup struct is used to disable raw mode
@@ -322,20 +330,29 @@ impl Output {
         self.dirty += 1;
     }
 
-    fn find(&mut self) -> io::Result<()> {
-        if let Some(keyword) = prompt!(self, "Search: {} (ESC to cancel)") {
-            for i in 0..self.editor_rows.number_of_rows() {
-                let row = self.editor_rows.get_editor_row(i);
-
-                if let Some(index) = row.render.find(&keyword) {
-                    self.cursor_controller.cursor_y = i;
-                    self.cursor_controller.cursor_x = row.get_row_content_x(index);
-                    self.cursor_controller.row_offset = self.editor_rows.number_of_rows();
-                    break;
+    fn find_callback(output: &mut Output, keyword: &str, key_code: KeyCode) {
+        match key_code {
+            KeyCode::Esc | KeyCode::Enter => {}
+            _ => {
+                for i in 0..output.editor_rows.number_of_rows() {
+                    let row = output.editor_rows.get_editor_row(i);
+                    if let Some(index) = row.render.find(&keyword) {
+                        output.cursor_controller.cursor_y = i;
+                        output.cursor_controller.cursor_x = row.get_row_content_x(index);
+                        output.cursor_controller.row_offset = output.editor_rows.number_of_rows();
+                        break;
+                    }
                 }
             }
         }
+    }
 
+    fn find(&mut self) -> io::Result<()> {
+        prompt!(
+            self,
+            "Search: {} (ESC to cancel)",
+            callback = Output::find_callback
+        );
         Ok(())
     }
 
@@ -733,8 +750,7 @@ impl Editor {
                 modifiers: KeyModifiers::CONTROL,
             } => {
                 if matches!(self.output.editor_rows.filename, None) {
-                    let prompt = prompt!(&mut self.output, "Save as: {} (ESC to cancel)")
-                        .map(|it| it.into());
+                    let prompt = prompt!(&mut self.output, "Save as: {} (ESC to cancel)").map(|it| it.into());
 
                     if let None = prompt {
                         self.output
