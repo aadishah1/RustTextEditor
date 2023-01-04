@@ -218,14 +218,25 @@ impl Output {
         }
 
         let row = self
-                .editor_rows
-                .get_editor_row_mut(self.cursor_controller.cursor_y);
-        
+            .editor_rows
+            .get_editor_row_mut(self.cursor_controller.cursor_y);
+
         if self.cursor_controller.cursor_x > 0 {
             row.delete_char(self.cursor_controller.cursor_x - 1);
             self.cursor_controller.cursor_x -= 1;
-            self.dirty += 1;
+        } else {
+            let previous_row_content = self
+                .editor_rows
+                .get_row(self.cursor_controller.cursor_y - 1);
+
+            self.cursor_controller.cursor_x = previous_row_content.len();
+
+            self.editor_rows
+                .join_adjacent_rows(self.cursor_controller.cursor_y);
+                
+            self.cursor_controller.cursor_y -= 1;
         }
+        self.dirty += 1;
     }
 
     fn draw_rows(&mut self) {
@@ -462,6 +473,14 @@ impl EditorRows {
 
     fn insert_row(&mut self) {
         self.row_contents.push(Row::default());
+    }
+
+    fn join_adjacent_rows(&mut self, at: usize) {
+        let current_row = self.row_contents.remove(at);
+        let previous_row = self.get_editor_row_mut(at - 1);
+
+        previous_row.row_content.push_str(&current_row.row_content);
+        Self::render_row(previous_row);
     }
 
     fn get_editor_row_mut(&mut self, at: usize) -> &mut Row {
